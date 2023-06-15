@@ -373,15 +373,22 @@ bool Spectrum::parseMstoolkitSpectrum
   //add possible charge states.
   if(  mst_real_spectrum->sizeZ() > 0 ){
     for (int z_idx = 0; z_idx < mst_real_spectrum -> sizeZ(); z_idx++) {
-      SpectrumZState zstate;
-      zstate.setSinglyChargedMass(
-        mst_real_spectrum->atZ(z_idx).mh,
-        mst_real_spectrum->atZ(z_idx).z);
-      zstates_.push_back(zstate);
+      if (mst_real_spectrum->atZ(z_idx).z > 0) {   // skip charge states = 0
+        SpectrumZState zstate;
+        zstate.setSinglyChargedMass(
+          mst_real_spectrum->atZ(z_idx).mh,
+          mst_real_spectrum->atZ(z_idx).z);
+        zstates_.push_back(zstate);
+      }
     }
-  } else { // if no charge states detected, decide based on spectrum
-	charge_state_assigned_ = assignZState();
+  } 
+ 	if (Params::GetBool("override-charges")) {
+    zstates_.clear();
   }
+  if (zstates_.size() == 0) { // if no charge states detected, decide based on spectrum
+	  charge_state_assigned_ = assignZState();
+  }
+
 
   return true;
 }
@@ -456,6 +463,8 @@ bool Spectrum::parsePwizSpecInfo(
     for(size_t ion_idx = 0; ion_idx < ions.size(); ion_idx++){
       int charge = ions[ion_idx].cvParam(pzd::MS_charge_state).valueAs<int>();
       carp(CARP_DEBUG, "Charge:%d", charge);
+      if (charge == 0 ) // skip charge states = 0
+        continue;
       if (ions[ion_idx].hasCVParam(pzd::MS_accurate_mass_OBSOLETE)) {
         //bullseye-determined charge states
         FLOAT_T accurate_mass = 
@@ -498,9 +507,11 @@ bool Spectrum::parsePwizSpecInfo(
           const string& zLine = i->value; // "<charge> <m/z>"
           size_t separator = zLine.find(" ");
           SpectrumZState zstate;
-          zstate.setMZ(boost::lexical_cast<double>(zLine.substr(separator + 1)),
-                       boost::lexical_cast<int>(zLine.substr(0, separator)));
-          zstates_.push_back(zstate);
+          if (boost::lexical_cast<int>(zLine.substr(0, separator)) > 0) {  // skip charge states = 0
+            zstate.setMZ(boost::lexical_cast<double>(zLine.substr(separator + 1)),
+                        boost::lexical_cast<int>(zLine.substr(0, separator)));
+            zstates_.push_back(zstate);
+          }
         }
       }
     }
@@ -512,17 +523,20 @@ bool Spectrum::parsePwizSpecInfo(
         vector<pzd::CVParam> charges = 
           ions[0].cvParamChildren(pzd::MS_possible_charge_state);
         for (size_t charge_idx = 0; charge_idx < charges.size(); charge_idx++) {
-          SpectrumZState zstate;
-          zstate.setMZ(precursor_mz_, charges[charge_idx].valueAs<int>());
-          zstates_.push_back(zstate);
+          if (charges[charge_idx].valueAs<int>() > 0 ) {  // skip charge states = 0
+            SpectrumZState zstate;
+            zstate.setMZ(precursor_mz_, charges[charge_idx].valueAs<int>());
+            zstates_.push_back(zstate);
+          }
         }
-      } else { // we have no charge information
-        // added by Yang
-        if (dia_mode) { charge_state_assigned_ = assignZStateDIA(); } //add +1, +2, ... max-precursor-charge
-        else { charge_state_assigned_ = assignZState(); } //do choose charge and add +1 or +2,+3
       }
     }
-
+  }
+ 	if (Params::GetBool("override-charges")) {
+    zstates_.clear();
+  }
+  if (zstates_.size() == 0) { // if no charge states detected, decide based on spectrum
+	  charge_state_assigned_ = assignZState();
   }
 
   return true;
@@ -534,16 +548,16 @@ int Spectrum::getMS1Scan() const { return ms1_scan_; }
 FLOAT_T Spectrum::getIsoWindowLowerMZ() const { return iso_window_lower_mz_; }
 FLOAT_T Spectrum::getIsoWindowUpperMZ() const { return iso_window_upper_mz_; }
 
-bool Spectrum::assignZStateDIA() {
+bool Spectrum::assignZState() {
+	int min_charge = Params::GetInt("min-precursor-charge");
 	int max_charge = Params::GetInt("max-precursor-charge");
-	for (size_t curr_charge = 1; curr_charge <= max_charge; curr_charge++) {
+	for (size_t curr_charge = min_charge; curr_charge <= max_charge; ++curr_charge) {
 		SpectrumZState zstate;
 		zstate.setMZ(precursor_mz_, curr_charge);
 		zstates_.push_back(zstate);
 	}
 	return true;
 }
-
 
 /**
  * Adds a peak to the spectrum given a intensity and location
@@ -959,9 +973,12 @@ const char* Spectrum::getFilename() {
  * \Determine charge state for a spectrum without Z line 
  * /return true if it can determine charge state and return false if it can't create z line 
  */
+ /*
 bool Spectrum::assignZState() {
   carp_once(CARP_WARNING, "Spectrum %i has no charge state. Calculating charge",
             first_scan_);
+
+  int min_
   
   if (peaks_.empty()) {
     carp(CARP_INFO, "Cannot determine charge state of spectrum %d with no peaks.",
@@ -1008,7 +1025,7 @@ bool Spectrum::assignZState() {
   zstates_.push_back(zstate);
   return true;    
 }
-
+*/
 const char* Spectrum::getFullFilename(){
 
   if (filename_.empty()){

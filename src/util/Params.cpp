@@ -877,6 +877,13 @@ InitStringParam("protein-name-separator", ",",
     "Output in tab-delimited text only the file name, scan number, charge, score and peptide."
     "Incompatible with mzid-output=T, pin-output=T, pepxml-output=T or txt-output=F.",
     "Available for tide-search", true);
+  InitBoolParam("override-charges", false,
+    "If this is set to T, then all spectra are searched in all charge states from min-charge to max-charge. "
+    "Otherwise, the default behavior is to search with all charge states only if a spectrum has no charge "
+    "or charge=0.",
+    "Available for tide-search", true);
+
+
   /*
    * Comet parameters
    */

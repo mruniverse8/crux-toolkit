@@ -141,7 +141,7 @@ class Spectrum{
   int getMS1Scan() const;
   FLOAT_T getIsoWindowLowerMZ() const;
   FLOAT_T getIsoWindowUpperMZ() const;
-  bool assignZStateDIA();
+//  bool assignZStateDIA();
 
   /**
    * Prints a spectrum object to file.

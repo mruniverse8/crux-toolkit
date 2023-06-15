@@ -16,6 +16,7 @@
 #include <cstring>
 #include "io/carp.h"
 #include "util/WinCrux.h"
+#include "util/crux-utils.h"
 #include <iostream>
 
 using namespace std;

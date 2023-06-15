@@ -60,6 +60,7 @@ message Header {
 
   message SpectraHeader {
     optional bool sorted = 2;
+    optional string version = 3;
   }
   
   message ResultsHeader {

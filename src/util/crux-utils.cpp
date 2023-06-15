@@ -1623,6 +1623,14 @@ void postToAnalytics(const string& appName) {
   }
 }
 
+std::string getDateFromCurxVersion(){
+  std::string version = std::string(CRUX_VERSION);
+  int len = version.length();
+  int date_len = 10;
+  std::string date = version.substr(len-date_len, date_len);
+  return date;
+}
+
 /*
  * Local Variables:
  * mode: c

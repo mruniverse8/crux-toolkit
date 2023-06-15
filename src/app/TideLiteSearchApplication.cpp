@@ -41,7 +41,6 @@ const double TideLiteSearchApplication::TAILOR_QUANTILE_TH = 0.01;
 const double TideLiteSearchApplication::TAILOR_OFFSET = 5.0 ;
 
 TideLiteSearchApplication::TideLiteSearchApplication() {
-  exact_pval_search_ = false;
   remove_index_ = "";
   spectrum_flag_ = NULL;
   decoy_num_ = 0;
@@ -241,12 +240,12 @@ string TideLiteSearchApplication::getOutputFileName() {
   return output_file_name_;
 }
 
-
+// In order to add more options, you need to add them to ./src/util/Params.cpp
 vector<string> TideLiteSearchApplication::getOptions() const {
   string arr[] = {
     "auto-mz-bin-width",
     "auto-precursor-window",
-    "compute-sp",
+//    "compute-sp",   // To be removed
     "concat",
     "deisotope",
     "elution-window-size",
@@ -265,9 +264,10 @@ vector<string> TideLiteSearchApplication::getOptions() const {
     "mzid-output",
     "num-threads",
     "output-dir",
+    "override-charges",
     "overwrite",
     "parameter-file",
-    "peptide-centric-search",
+//    "peptide-centric-search", // To be removed
     "pepxml-output",
     "pin-output",
     "pm-charges",
@@ -306,6 +306,13 @@ vector<string> TideLiteSearchApplication::getOptions() const {
   };
   return vector<string>(arr, arr + sizeof(arr) / sizeof(string));
 }
+/*
+Parameters to be removed from ./Params.cpp"
+brief-output
+peptide-centric-search
+use-tailor-calibration
+exact-p-value
+*/
 
 string TideLiteSearchApplication::getName() const {
   return "tide-lite-search";
