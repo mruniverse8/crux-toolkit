@@ -331,19 +331,3 @@ void  Peptide::GetFlankingAAs(
   }
   
 }
-
-// Probably defunct, uses old calling format.
-/*
-int NoInlineDotProd(Peptide* peptide, const int* cache, int charge) {
-  const void* prog = peptide->Prog(charge);
-  int result;
-#ifdef _MSC_VER
-  // FIXME CEG add Windows compatible inline assembly
-#else
-  __asm__ __volatile__("call *%[prog]\n"
-                       : "=a" (result)
-                       : "d" (cache), [prog] "abcSD" (prog));
-#endif
-  return result;
-}
-*/

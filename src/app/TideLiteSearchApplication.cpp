@@ -6,18 +6,19 @@
 #include "io/carp.h"
 #include "parameter.h"
 #include "io/SpectrumRecordWriter.h"
-#include "TideIndexApplication.h"
+//#include "TideIndexApplication.h"
 #include "TideLiteSearchApplication.h"
 #include "ParamMedicApplication.h"
 #include "PSMConvertApplication.h"
 #include "tide/mass_constants.h"
-#include "TideMatchSet.h"
+#include "TideLiteMatchSet.h"
 #include "tide/spectrum_collection.h"
 #include "util/Params.h"
 #include "util/FileUtils.h"
 #include "util/StringUtils.h"
 #include <math.h> 
 #include <map>
+#include "tide/ActivePeptideQueueLite.h"
 
 //here :O
 #include <iostream>
@@ -44,10 +45,34 @@ TideLiteSearchApplication::TideLiteSearchApplication() {
   remove_index_ = "";
   spectrum_flag_ = NULL;
   decoy_num_ = 0;
+  num_range_skipped_ = 0;
+  num_precursors_skipped_ = 0;
+  num_isotopes_skipped_ = 0;
+  num_retained_ = 0;
+  total_candidate_peptides_ = 0;
+  precursor_window_ = 0;
+  spectrum_min_mz_ = 0; 
+  spectrum_max_mz_ = 0;
+  min_scan_ = 0;
+  max_scan_ = 0;
+  min_peaks_ = 0;
+  min_precursor_charge_ = 0;
+  max_precursor_charge_ = 0;
+  tsv_output_ = false;
+  mztab_output_ = false;
+  pin_output_ = false;
+  target_file_ = NULL;
+  decoy_file_ = NULL;
+
+  for (int i = 0; i < NUMBER_LOCK_TYPES; i++) {
+    locks_array_.push_back(new boost::mutex());
+  }
 }
 
 TideLiteSearchApplication::~TideLiteSearchApplication() {
-
+  for (int i = 0; i < NUMBER_LOCK_TYPES; i++) {
+    delete locks_array_[i];
+  }
 }
 
 int TideLiteSearchApplication::main(int argc, char** argv) {
@@ -60,33 +85,82 @@ int TideLiteSearchApplication::main(const vector<string>& input_files) {
 
 int TideLiteSearchApplication::main(const vector<string>& input_files, const string input_index) {
   carp(CARP_INFO, "Running tide-lite-search...");
+
+  print_interval_ = Params::GetInt("print-search-progress");  
   
   bin_width_  = Params::GetDouble("mz-bin-width");
   bin_offset_ = Params::GetDouble("mz-bin-offset");
 
   use_neutral_loss_peaks_ = Params::GetBool("use-neutral-loss-peaks");
   use_flanking_peaks_ = Params::GetBool("use-flanking-peaks");
-  
+
+  negative_isotope_errors_ = getNegativeIsotopeErrors();  
+
+  window_type_= string_to_window_type(Params::GetString("precursor-window-type"));
+  precursor_window_ = Params::GetDouble("precursor-window");
+
+  spectrum_min_mz_ =  Params::GetDouble("spectrum-min-mz") ;
+  spectrum_max_mz_ = Params::GetDouble("spectrum-max-mz") ;
+  min_peaks_ = Params::GetInt("min-peaks");
+  min_precursor_charge_ = Params::GetInt("min-precursor-charge");
+  max_precursor_charge_ = Params::GetInt("max-precursor-charge");  
+
+  top_matches_ = Params::GetInt("top-match");  
+
+  // Check scan-number parameter
+  string scan_range = Params::GetString("scan-number");
+  if (scan_range.empty()) {
+    min_scan_ = 0;
+    max_scan_ = BILLION;
+    carp(CARP_DEBUG, "Searching all scans");
+  } else if (scan_range.find('-') == string::npos) {
+    // Single scan
+    min_scan_ = max_scan_ = atoi(scan_range.c_str());
+    carp(CARP_INFO, "Searching single scan %d", min_scan_);
+  } else {
+    if (!get_range_from_string(scan_range.c_str(), min_scan_, max_scan_)) {
+      carp(CARP_FATAL, "The scan number range '%s' is invalid. "
+           "Must be of the form <first>-<last>.", scan_range.c_str());
+    }
+    if (min_scan_ > max_scan_) {
+      carp(CARP_FATAL, "Invalid scan range: %d to %d.", min_scan_, max_scan_);
+    }
+    carp(CARP_INFO, "Searching scan range %d to %d.", min_scan_, max_scan_);
+  }
+
+  // Determine which score function to use for scoring PSMs and store in SCORE_FUNCTION enum. TODO: update this in ./src/util/crux-utils.cpp: 68
+  curScoreFunction_ = string_to_score_function_type(Params::GetString("score-function"));  
+ 
   // Get a peptide reader to the peptide index datasets along with proteins, auxlocs. 
-  ProteinVec proteins;
+  vector<const pb::Protein*> proteins;
   vector<const pb::AuxLocation*> locations;
   pb::Header peptides_header;
   string peptides_file = FileUtils::Join(input_index, "pepix");  
   HeadedRecordReader peptide_reader = HeadedRecordReader(peptides_file, &peptides_header);
   getPeptideIndexData(input_index, proteins, locations, peptides_header);
-
   // Create active peptide queue
-  ActivePeptideQueue* active_peptide_queue = new ActivePeptideQueue(peptide_reader.Reader(), proteins, &locations);  
-  // active_peptide_queue->SetBinSize(bin_width_, bin_offset_);  // TODO: consider removing
+  active_peptide_queue_ = new ActivePeptideQueueLite(peptide_reader.Reader(), proteins, &locations);  
 
   // Create the output files
-  ofstream* target_file = NULL;
-  ofstream* decoy_file = NULL;
- 
-  createOutputFiles(&target_file, &decoy_file);
+  createOutputFiles(&target_file_, &decoy_file_);
+
+  TideLiteMatchSet::curScoreFunction_ = curScoreFunction_;
+  TideLiteMatchSet::active_peptide_queue_ = active_peptide_queue_;
+  TideLiteMatchSet::top_matches_ = top_matches_;
+  TideLiteMatchSet::decoy_num_ = decoy_num_;
+  TideLiteMatchSet::mass_precision_ =  Params::GetInt("mass-precision");
+  TideLiteMatchSet::score_precision_ = Params::GetInt("precision");
+  TideLiteMatchSet::concat_ = Params::GetBool("concat");
+  TideLiteMatchSet::decoy_prefix_ = top_matches_;
+
+  TideLiteMatchSet psm_scores;
+  TSV_OUTPUT_FORMATS_T format = TIDE_SEARCH_TSV;
+  string header = psm_scores.getHeader(format);
+  printf("%s\n", header.c_str());
+
 
   // Convert the input spectrum data files to spectrumRecords if needed
-  vector<InputFile> sr = getInputFiles(input_files);
+/*  vector<InputFile> sr = getInputFiles(input_files);
   // Loop through spectrum files
   // Here :O
   vector<vector<Spectrum*>*> vect_spectra;
@@ -135,7 +209,224 @@ int TideLiteSearchApplication::main(const vector<string>& input_files, const str
       remove(spectra_file.c_str());
     }
   }
+*/
+  delete active_peptide_queue_;
   return 0;
+}
+
+
+void TideLiteSearchApplication::search() {
+  
+  // This is the main search loop.
+
+                           
+  SpectrumCollection::SpecCharge* sc; // get this data from the queue.
+
+  Spectrum* spectrum = sc->spectrum;
+  double precursor_mz = spectrum->PrecursorMZ();
+  int charge = sc->charge;
+  int scan_num = spectrum->SpectrumNumber();
+
+  if (precursor_mz < spectrum_min_mz_|| 
+      precursor_mz > spectrum_max_mz_ || 
+      scan_num < min_scan_ || 
+      scan_num > max_scan_ ||
+      spectrum->Size() < min_peaks_  ||
+      charge < min_precursor_charge_ || 
+      charge >max_precursor_charge_ ) {
+    //continue; ///switch to continue in a loop
+    return;
+  }
+
+  if (spectrum_flag_ != NULL) {  // TODO: Do something, possibly for cascade search
+  }
+
+  vector<double>* min_mass = new vector<double>();
+  vector<double>* max_mass = new vector<double>();
+  double min_range, max_range;
+  
+  computeWindow(*sc, min_mass, max_mass, &min_range, &max_range);
+  active_peptide_queue_->SetActiveRange(min_mass, max_mass, min_range, max_range);
+
+  if (active_peptide_queue_->nCandPeptides_ == 0) { // No peptides to score.
+    return; ///switch to continue in a loop
+  }
+  locks_array_[LOCK_CANDIDATES]->lock();
+  total_candidate_peptides_ += active_peptide_queue_->nCandPeptides_;
+  locks_array_[LOCK_CANDIDATES]->unlock();  
+
+  TideLiteMatchSet psm_scores;
+  switch (curScoreFunction_) {
+    case XCORR_SCORE:
+      XCorrScoring(sc, psm_scores);
+      break;
+    case PVALUES:
+      PValueScoring();
+      break;
+  }
+  TSV_OUTPUT_FORMATS_T format = TIDE_SEARCH_TSV;
+  string report = psm_scores.getReport(format, sc, true);  // get targets
+//  string report = psm_scores.getReport(format, sc, false);  // get decoys
+  locks_array_[LOCK_RESULTS]->lock();
+  //write restuls
+  // target_file << results
+  locks_array_[LOCK_RESULTS]->unlock();
+}
+
+void TideLiteSearchApplication::XCorrScoring(SpectrumCollection::SpecCharge* sc, TideLiteMatchSet& psm_scores){
+  // scpectrum preprocessing for xcorr scoring
+
+  ObservedPeakSet observed(bin_width_, bin_offset_,
+                           use_neutral_loss_peaks_,
+                           use_flanking_peaks_);
+
+  long num_range_skipped = 0;
+  long num_precursors_skipped = 0;
+  long num_isotopes_skipped = 0;
+  long num_retained = 0;
+
+  int charge = sc->charge;  
+
+  observed.PreprocessSpectrum(*(sc->spectrum), charge, &num_range_skipped,
+                              &num_precursors_skipped,
+                              &num_isotopes_skipped, &num_retained);
+
+  // locks_array_[LOCK_REPORTING]->lock();
+  num_range_skipped_ += num_range_skipped;
+  num_precursors_skipped_ += num_precursors_skipped;
+  num_isotopes_skipped_ += num_isotopes_skipped;
+  num_retained_ += num_retained;
+  // locks_array_[LOCK_REPORTING]->unlock();
+
+  // Score the inactive peptides in the peptide queue if the number of nCadPeptides 
+  // is less than the minimum for Tailor scoring
+
+  bool score_inactive_peptides = true;
+  if (active_peptide_queue_->min_candidates_ < active_peptide_queue_->nCandPeptides_)
+    score_inactive_peptides = false;
+  
+  //Actual Xcorr Scoring 
+  const int* cache = observed.GetCache();        
+  int cnt = 0;
+  for (deque<PeptideLite*>::const_iterator iter = active_peptide_queue_->begin_; 
+    iter != active_peptide_queue_->end_;
+    ++iter, ++cnt) {
+    if (active_peptide_queue_->candidatePeptideStatus_[cnt] == false || score_inactive_peptides) 
+      continue;
+    TideLiteMatchSet::Scores currScore;
+    int xcorr = 0;
+    int match_cnt = 0;
+
+    // Score with single charged theoretical peaks
+    for (vector<unsigned int>::const_iterator iter_uint = (*iter)->peaks_0.begin();
+      iter_uint != (*iter)->peaks_0.end();
+      iter_uint++) {
+      xcorr += cache[*iter_uint];
+      if (cache[*iter_uint] > 0) {
+        ++match_cnt;
+      }
+
+    }
+    // Score with double charged theoretical peaks
+    if (charge > 2){
+      for (vector<unsigned int>::const_iterator iter_uint = (*iter)->peaks_1.begin();
+        iter_uint != (*iter)->peaks_1.end();
+        iter_uint++) {
+        xcorr += cache[*iter_uint];
+        if (cache[*iter_uint] > 0) {
+          ++match_cnt;
+        }
+      }
+    }
+    currScore.ordinal_ = cnt;
+    currScore.xcorr_score_ = xcorr;
+    currScore.by_ion_matched_ = match_cnt;
+    currScore.by_ion_total_ = (*iter)->peaks_0.size();
+    if (charge > 2){
+      currScore.by_ion_total_ += (*iter)->peaks_1.size();
+    }
+    psm_scores.psm_scores_.push_back(currScore);
+  } 
+  // Get tailor score here
+}
+
+void TideLiteSearchApplication::PValueScoring(){
+//  double precursorMass = sc->neutral_mass;  //Added by Andy Lin (needed for residue evidence); TODO: rename neutral_mass
+
+}
+
+void TideLiteSearchApplication::computeWindow(
+  const SpectrumCollection::SpecCharge& sc,
+  vector<double>* out_min,
+  vector<double>* out_max,
+  double* min_range,
+  double* max_range
+) {
+  double unit_dalton = BIN_WIDTH;
+  switch (window_type_) {
+  case WINDOW_MASS:
+    for (vector<int>::const_iterator ie = negative_isotope_errors_.begin(); ie != negative_isotope_errors_.end(); ++ie) {
+      out_min->push_back(sc.neutral_mass + (*ie * unit_dalton) - precursor_window_);
+      out_max->push_back(sc.neutral_mass + (*ie * unit_dalton) + precursor_window_);
+    }
+    *min_range = (sc.neutral_mass + (negative_isotope_errors_.front() * unit_dalton)) - precursor_window_;
+    *max_range = (sc.neutral_mass + (negative_isotope_errors_.back() * unit_dalton)) + precursor_window_;
+    break;
+  case WINDOW_MZ: {
+    double mz_minus_proton = sc.spectrum->PrecursorMZ() - MASS_PROTON;
+    for (vector<int>::const_iterator ie = negative_isotope_errors_.begin(); ie != negative_isotope_errors_.end(); ++ie) {
+      out_min->push_back((mz_minus_proton - precursor_window_) * sc.charge + (*ie * unit_dalton));
+      out_max->push_back((mz_minus_proton + precursor_window_) * sc.charge + (*ie * unit_dalton));
+    }
+    // N.B. Next two lines used to have max_charge instead of sc.charge. Not sure why. --WSN 9 Jun 2021
+    *min_range = (mz_minus_proton*sc.charge + (negative_isotope_errors_.front() * unit_dalton)) - precursor_window_*sc.charge;
+    *max_range = (mz_minus_proton*sc.charge + (negative_isotope_errors_.back() * unit_dalton)) + precursor_window_*sc.charge;
+    break;
+  }
+  case WINDOW_PPM: {
+    double tiny_precursor = precursor_window_ * 1e-6;
+    for (vector<int>::const_iterator ie = negative_isotope_errors_.begin(); ie != negative_isotope_errors_.end(); ++ie) {
+      out_min->push_back((sc.neutral_mass + (*ie * unit_dalton)) * (1.0 - tiny_precursor));
+      out_max->push_back((sc.neutral_mass + (*ie * unit_dalton)) * (1.0 + tiny_precursor));
+    }
+    *min_range = (sc.neutral_mass + (negative_isotope_errors_.front() * unit_dalton)) * (1.0 - tiny_precursor);
+    *max_range = (sc.neutral_mass + (negative_isotope_errors_.back() * unit_dalton)) * (1.0 + tiny_precursor);
+    break;
+  }
+  default:
+    carp(CARP_FATAL, "Invalid window type");
+  }
+  carp(CARP_DETAILED_DEBUG, "Scan=%d Charge=%d Mass window=[%f, %f]",
+       sc.spectrum->SpectrumNumber(), sc.charge, (*out_min)[0], (*out_max)[0]);
+}
+
+vector<int> TideLiteSearchApplication::getNegativeIsotopeErrors() {
+  string isotope_errors_string = Params::GetString("isotope-error");
+  if (isotope_errors_string[0] == ',') {
+    carp(CARP_FATAL, "Error in isotope_error parameter formatting: (%s)",
+         isotope_errors_string.c_str());
+  }
+  for (string::const_iterator i = isotope_errors_string.begin(); i != isotope_errors_string.end(); i++) {
+    if (*i == ',' && (i+1 == isotope_errors_string.end() || *(i+1) == ',')) {
+      carp(CARP_FATAL, "Error in isotope_error parameter formatting: (%s) ", isotope_errors_string.c_str());
+    }
+  }
+
+  vector<int> negative_isotope_errors(1, 0);
+  if (!isotope_errors_string.empty()) {
+    vector<int> isotope_errors = StringUtils::Split<int>(isotope_errors_string, ',');
+    for (vector<int>::iterator i = isotope_errors.begin(); i != isotope_errors.end(); i++) {
+      if (*i < 0) {
+        carp(CARP_FATAL, "Found a negative isotope error: %d.", *i);
+      } else if (find(negative_isotope_errors.begin(), negative_isotope_errors.end(),
+                      -(*i)) != negative_isotope_errors.end()) {
+        carp(CARP_FATAL, "Found duplicate when parsing isotope_error parameter: %d", *i);
+      }
+      negative_isotope_errors.push_back(-(*i));
+    }
+  }
+  sort(negative_isotope_errors.begin(), negative_isotope_errors.end());
+  return negative_isotope_errors;
 }
 
 
@@ -175,11 +466,7 @@ void TideLiteSearchApplication::getPeptideIndexData(const string input_index, Pr
   }
 
   const pb::Header::PeptidesHeader& pepHeader = peptides_header.peptides_header();
-//  DECOY_TYPE_T headerDecoyType = (DECOY_TYPE_T)pepHeader.decoys();  // TODO: consider removing
   decoy_num_ = pepHeader.has_decoys_per_target() ? pepHeader.decoys_per_target() : 0;
-  // if (headerDecoyType != NO_DECOYS) { // TODO: consider removing
-  //   decoy_num_ = 0;
-  // }
 
   // Initizalize the Mass Constants class
   MassConstants::Init(&pepHeader.mods(), &pepHeader.nterm_mods(), &pepHeader.cterm_mods(),
@@ -187,8 +474,8 @@ void TideLiteSearchApplication::getPeptideIndexData(const string input_index, Pr
 
   ModificationDefinition::ClearAll();
 
-  // Initialize the TideMatchSet for reporting search results
-  TideMatchSet::decoy_prefix_ = decoy_prefix;  
+  // Initialize the TideLiteMatchSet for reporting search results
+/*  TideMatchSet::decoy_prefix_ = decoy_prefix;  
 
   stringstream ss;
   ss << Params::GetString("enzyme") << '-' << Params::GetString("digestion");
@@ -199,6 +486,8 @@ void TideLiteSearchApplication::getPeptideIndexData(const string input_index, Pr
   TideMatchSet::initModMap(pepHeader.cterm_mods(), PEPTIDE_C);
   TideMatchSet::initModMap(pepHeader.nprotterm_mods(), PROTEIN_N);
   TideMatchSet::initModMap(pepHeader.cprotterm_mods(), PROTEIN_C);
+*/
+  //TODO: do the amino acid frequency calculation here. Shouldn't it be done in tide-index?
 
 }
 
@@ -249,7 +538,7 @@ vector<string> TideLiteSearchApplication::getOptions() const {
     "concat",
     "deisotope",
     "elution-window-size",
-    "evidence-granularity",
+    "evidence-granularity", // To be removed
     "file-column",
     "fileroot",
     "fragment-tolerance",
@@ -312,6 +601,7 @@ brief-output
 peptide-centric-search
 use-tailor-calibration
 exact-p-value
+charge-state
 */
 
 string TideLiteSearchApplication::getName() const {
@@ -477,11 +767,9 @@ void TideLiteSearchApplication::processParams() {
   */
 }
 
-vector<InputFile> TideLiteSearchApplication::getInputFiles(
-  const vector<string>& filepaths
-) const {
+vector<TideLiteSearchApplication::InputFile> TideLiteSearchApplication::getInputFiles(const vector<string>& filepaths) const {
   // Try to read all spectrum files as spectrumrecords, convert those that fail
-  vector<InputFile> input_sr;
+  vector<TideLiteSearchApplication::InputFile> input_sr;
   for (vector<string>::const_iterator f = filepaths.begin(); f != filepaths.end(); f++) {
     SpectrumCollection spectra;
     pb::Header spectrum_header;
@@ -511,16 +799,11 @@ vector<InputFile> TideLiteSearchApplication::getInputFiles(
         carp(CARP_FATAL, "Error reading spectra file %s", spectrumrecords.c_str());
       }
     }
-    input_sr.push_back(InputFile(*f, spectrumrecords, keepSpectrumrecords));
+    input_sr.push_back(TideLiteSearchApplication::InputFile(*f, spectrumrecords, keepSpectrumrecords));
   }
   return input_sr;
 }
 
-
 SpectrumCollection* TideLiteSearchApplication::loadSpectra(const string& file) {
-
-}
-
-void TideLiteSearchApplication::search() {
 
 }

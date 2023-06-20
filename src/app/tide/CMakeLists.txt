@@ -84,6 +84,7 @@ if (WIN32 AND NOT CYGWIN)
     max_mz.cc
     mman.c
     peptide.cc
+    peptide_lite.cc
     peptide_mods3.cc
     peptide_peaks.cc
     sp_scorer.cc
@@ -104,6 +105,7 @@ else (WIN32 AND NOT CYGWIN)
     mass_constants.cc
     max_mz.cc
     peptide.cc
+    peptide_lite.cc
     peptide_mods3.cc
     peptide_peaks.cc
     sp_scorer.cc
