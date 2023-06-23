@@ -34,14 +34,15 @@ class TideLiteMatchSet {
     int by_ion_total_;     
     double sp_score_;
     double hyper_score_;
-    double hyper_score_la_; //maybe to be removed.
+    double hyper_score_la_; 
     double delta_cn_;
     double delta_lcn_;
     Scores():ordinal_(0), xcorr_score_(0), exact_pval_(0), refactored_xcorr_(0), 
       resEv_score_(0), resEv_pval_(0), combinedPval_(0), tailor_(0), by_ion_matched_(0), by_ion_total_(0), 
       sp_score_(0), hyper_score_(0), hyper_score_la_(0), delta_cn_(0), delta_lcn_(0){}
   };
-  typedef FixedCapacityArray<Scores> PSMScores;
+//   typedef FixedCapacityArray<Scores> PSMScores;
+  typedef vector<Scores> PSMScores;
   PSMScores psm_scores_;   // This one is used to gather psms during scoring.
 
   int n_concat_or_target_matches_;  // concat or target
@@ -54,24 +55,33 @@ class TideLiteMatchSet {
   static bool cmpCombinedPvalue(const Scores& x, const Scores& y) {  // compare PSMs by P-values. smaller comes first
     return x.xcorr_score_ > y.xcorr_score_;
   }  
-  static bool cmpHyperScore(const Scores& x, const Scores& y) {  // compare PSMs by P-values. larger comes first
+  static bool cmpHyperScore(const Scores& x, const Scores& y) {  // compare PSMs by hyper scores. larger comes first
     return x.hyper_score_ < y.hyper_score_;
   }  
+
+  // Define the column names and their order in the result files.
+  static int XCorr_cols[];  //these are declared at the beginning of TideLiteMatchSet.cpp
+  static int Pvalues_cols[];
+  static int Diameter_cols[]; 
 
   TideLiteMatchSet();
   ~TideLiteMatchSet();
 
-  string getHeader(TSV_OUTPUT_FORMATS_T format); // pass filetype;
-  string getReport(TSV_OUTPUT_FORMATS_T format, 
+  static int* getColumns(TSV_OUTPUT_FORMATS_T format, size_t& numHeaders);
+  static string getHeader(TSV_OUTPUT_FORMATS_T format); // pass filetype;
+  void getReport(TSV_OUTPUT_FORMATS_T format, string spectrum_filename,
                    SpectrumCollection::SpecCharge* sc,
-                   bool target
+                   string &concat_or_target_report, string& decoy_report
                    );
-  void calculateAdditionalScoresAndGatherTargetsDecoys(PSMScores& concat_or_target_psm_scores, PSMScores& decoy_psm_scores);  // Additional scores are:  delta_cn, delta_lcn, tailor
-
+  void gatherTargetsDecoys(PSMScores& concat_or_target_psm_scores, PSMScores& decoy_psm_scores);  // Additional scores are:  delta_cn, delta_lcn, tailor
+  void calculateAdditionalScores(PSMScores& psm_scores);  // Additional scores are:  delta_cn, delta_lcn, tailor; 
+  void printResults(TSV_OUTPUT_FORMATS_T format, string spectrum_filename, SpectrumCollection::SpecCharge* sc, PSMScores& psm_scores, string& results);
+  
   /* Constants required for the tailor scoring */
   const double TAILOR_QUANTILE_TH = 0.01;
   const double TAILOR_OFFSET = 5.0 ;
   double quantile_score_;
+  PSMScores::iterator last_psm_;
 
   // Global static parameters
   static SCORE_FUNCTION_T curScoreFunction_;
@@ -80,10 +90,9 @@ class TideLiteMatchSet {
   static int decoy_num_;
   static int mass_precision_;
   static int score_precision_;
+  static int mod_precision_;
   static bool concat_;
   static string decoy_prefix_;
-
-
 
 };
 

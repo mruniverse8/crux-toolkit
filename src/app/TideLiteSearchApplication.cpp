@@ -37,9 +37,7 @@ const double TideLiteSearchApplication::XCORR_SCALING = 100000000.0;
  * tide/spectrum_preprocess2.cc). */
 const double TideLiteSearchApplication::RESCALE_FACTOR = 20.0;
 
-/* Constants required for the tailor scoring */
-const double TideLiteSearchApplication::TAILOR_QUANTILE_TH = 0.01;
-const double TideLiteSearchApplication::TAILOR_OFFSET = 5.0 ;
+
 
 TideLiteSearchApplication::TideLiteSearchApplication() {
   remove_index_ = "";
@@ -150,13 +148,28 @@ int TideLiteSearchApplication::main(const vector<string>& input_files, const str
   TideLiteMatchSet::decoy_num_ = decoy_num_;
   TideLiteMatchSet::mass_precision_ =  Params::GetInt("mass-precision");
   TideLiteMatchSet::score_precision_ = Params::GetInt("precision");
+  TideLiteMatchSet::mod_precision_ = Params::GetInt("mod-precision");
   TideLiteMatchSet::concat_ = Params::GetBool("concat");
   TideLiteMatchSet::decoy_prefix_ = top_matches_;
 
-  TideLiteMatchSet psm_scores;
   TSV_OUTPUT_FORMATS_T format = TIDE_SEARCH_TSV;
-  string header = psm_scores.getHeader(format);
+  string header = TideLiteMatchSet::getHeader(format);
   printf("%s\n", header.c_str());
+
+  TideLiteMatchSet psm_scores;
+  for (int i = 0; i < 1500; ++i){
+    TideLiteMatchSet::Scores currScore;
+    currScore.xcorr_score_ = i+15.0;
+    currScore.ordinal_ = i;
+    psm_scores.psm_scores_.push_back(currScore);
+  }
+  SpectrumCollection::SpecCharge* sc = NULL; // get this data from the queue
+  string concat_or_target_report;
+  string decoy_report;
+//  psm_scores.getReport(format, string("spectrum_filename"), sc, concat_or_target_report, decoy_report);  // get targets
+  printf("%s\n", concat_or_target_report.c_str());
+
+
 
 
   // Convert the input spectrum data files to spectrumRecords if needed
@@ -265,7 +278,9 @@ void TideLiteSearchApplication::search() {
       break;
   }
   TSV_OUTPUT_FORMATS_T format = TIDE_SEARCH_TSV;
-  string report = psm_scores.getReport(format, sc, true);  // get targets
+  string concat_or_target_report;
+  string decoy_report;
+//  psm_scores.getReport(format, string("spectrum_filename"), sc, concat_or_target_report, decoy_report);  // get targets
 //  string report = psm_scores.getReport(format, sc, false);  // get decoys
   locks_array_[LOCK_RESULTS]->lock();
   //write restuls
@@ -325,7 +340,6 @@ void TideLiteSearchApplication::XCorrScoring(SpectrumCollection::SpecCharge* sc,
       if (cache[*iter_uint] > 0) {
         ++match_cnt;
       }
-
     }
     // Score with double charged theoretical peaks
     if (charge > 2){
@@ -339,7 +353,7 @@ void TideLiteSearchApplication::XCorrScoring(SpectrumCollection::SpecCharge* sc,
       }
     }
     currScore.ordinal_ = cnt;
-    currScore.xcorr_score_ = xcorr;
+    currScore.xcorr_score_ = (double)xcorr/XCORR_SCALING;// (double)(it->first / XCORR_SCALING)
     currScore.by_ion_matched_ = match_cnt;
     currScore.by_ion_total_ = (*iter)->peaks_0.size();
     if (charge > 2){
@@ -347,7 +361,6 @@ void TideLiteSearchApplication::XCorrScoring(SpectrumCollection::SpecCharge* sc,
     }
     psm_scores.psm_scores_.push_back(currScore);
   } 
-  // Get tailor score here
 }
 
 void TideLiteSearchApplication::PValueScoring(){
@@ -472,7 +485,42 @@ void TideLiteSearchApplication::getPeptideIndexData(const string input_index, Pr
   MassConstants::Init(&pepHeader.mods(), &pepHeader.nterm_mods(), &pepHeader.cterm_mods(),
       &pepHeader.nprotterm_mods(), &pepHeader.cprotterm_mods(), bin_width_, bin_offset_);
 
-  ModificationDefinition::ClearAll();
+  // Calculate the Amino Acid Frequencies for the P-value calculation
+  // pb::Peptide current_pb_peptide_;
+  // HeadedRecordReader peptide_reader = HeadedRecordReader(peptides_file, &peptides_header);
+  // while (!(peptide_reader.Done())) { //read all peptides form index
+  //   peptide_reader.Read(&current_pb_peptide_);
+  //   //Peptide* peptide = new(&fifo_alloc_peptides_) Peptide(current_pb_peptide_, proteins_, &fifo_alloc_peptides_);
+  //   PeptideLite* peptide = new PeptideLite(current_pb_peptide_, proteins, NULL);
+  //   string proteinNames = peptide->GetLocationStr("decoy_");
+  //   string flankingAAs = peptide->GetFlankingAAs();
+  //   string peptide_with_mods = peptide->SeqWithMods(4);
+  //   string modifications = peptide->getModifications(4); // todo: needs to be tested
+  //   printf("%s\t", peptide_with_mods.c_str());
+  //   printf("%s\t", modifications.c_str());
+  //   printf("%s\t", flankingAAs.c_str());
+  //   printf("%s\n", proteinNames.c_str());
+  // }
+  // ModificationDefinition::ClearAll();
+
+  // const pb::ModTable *modtable = &pepHeader.mods();
+  // int stat_mod_size = modtable->static_mod_size();
+  // printf("static mod size:%d", stat_mod_size);
+  // for (int i = 0; i < modtable->static_mod_size(); ++i) {
+  //   char aa = modtable->static_mod(i).amino_acids()[0];
+  //   double delta = modtable->static_mod(i).delta();
+  //   printf("aa:%c, mass:%lf\n", aa, delta);
+  // }
+
+  // modtable = &pepHeader.nterm_mods();
+  // stat_mod_size = modtable->static_mod_size();
+  // printf("static mod size:%d", stat_mod_size);
+  // for (int i = 0; i < modtable->static_mod_size(); ++i) {
+  //   char aa = modtable->static_mod(i).amino_acids()[0];
+  //   double delta = modtable->static_mod(i).delta();
+  //   printf("aa:%c, mass:%lf\n", aa, delta);
+  // }
+
 
   // Initialize the TideLiteMatchSet for reporting search results
 /*  TideMatchSet::decoy_prefix_ = decoy_prefix;  

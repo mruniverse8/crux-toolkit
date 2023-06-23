@@ -64,7 +64,7 @@ class PeptideLite {
   // is used for allocation. Please see the BIG CAUTION message at the top 
   // of the class definition for details.
   ~PeptideLite() {
-    delete[] mods_;
+//    delete[] mods_;
   }
 
   string Seq() const { return string(residues_, Len()); } // For display
@@ -81,20 +81,20 @@ class PeptideLite {
 /**
   Get the modifications from the peptide sequence
 */
-  string getModifications();
+  string getModifications(int mod_precision);
 
 /**
  * Gets the peptide sequence with modifications
  */
   string SeqWithMods(int mod_precision);
 
-  void DecodeMod(){
-    for (int i = 0; i < num_mods_; ++i) {
-      int index;
-      double delta;
-      MassConstants::DecodeMod(mods_[i], &index, &delta);
-    }
-  }
+  // void DecodeMod(){  // TODO: to be removed
+  //   for (int i = 0; i < num_mods_; ++i) {
+  //     int index;
+  //     double delta;
+  //     MassConstants::DecodeMod(mods_[i], &index, &delta);
+  //   }
+  // }
 
   // Compute and cache set of theoretical peaks using the provided workspace.
   // Workspace exists for efficiency: it can be reused by another Peptide
@@ -115,11 +115,12 @@ class PeptideLite {
   int FirstLocProteinId() const { return first_loc_protein_id_; }
   int FirstLocPos() const { return first_loc_pos_; }
   int ProteinLenth() const {return protein_length_;}
-  int Mods(const ModCoder::Mod** mods) const {
+/*  int Mods(const ModCoder::Mod** mods) const {
     *mods = mods_;
     return num_mods_;
   }
   ModCoder::Mod* Mods() const { return mods_; }
+  */
   bool IsDecoy() const { return decoyIdx_ >= 0; }
   int DecoyIdx() const { return decoyIdx_; }
   vector<double> getAAMasses() const;
@@ -138,6 +139,7 @@ class PeptideLite {
   template<class W> void AddIons(W* workspace, bool dia_mode = false) ;
 
   void Compile(const TheoreticalPeakArr* peaks);
+  bool find_static_mod(const pb::ModTable* mod_table, char AA, double& mod_mass); // mod_mass output variable
           
   int len_;
   double mass_;
@@ -149,7 +151,7 @@ class PeptideLite {
   const char* residues_;
   const char* target_residues_;
   int num_mods_;
-  ModCoder::Mod* mods_;
+  vector<ModCoder::Mod> mods_;
   int decoyIdx_;
   string decoy_seq_;
   bool b_ions_only_;  // Only the b-ions are needed for exact p-value scoring. It is true for XPV
@@ -159,7 +161,7 @@ class PeptideLite {
   vector<int> ion_mzbins_, b_ion_mzbins_, y_ion_mzbins_;   // Added for Diameter
   string protein_id_str_;
   string flankingAAs_;
-  string seqWithMods_;
+  string seq_with_mods_;
   string mod_string_;
 };
 

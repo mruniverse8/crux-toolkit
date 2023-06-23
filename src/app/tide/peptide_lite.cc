@@ -44,12 +44,10 @@ PeptideLite::PeptideLite(const pb::Peptide& peptide,
     }
   }
                     
-  if (peptide.modifications_size() > 0) {
-    num_mods_ = peptide.modifications_size();
-    mods_ = new ModCoder::Mod[num_mods_];
-    for (int i = 0; i < num_mods_; ++i)
-      mods_[i] = ModCoder::Mod(peptide.modifications(i));
-  } 
+  num_mods_ = peptide.modifications_size();
+  for (int i = 0; i < num_mods_; ++i)
+    mods_.push_back(ModCoder::Mod(peptide.modifications(i)));
+
   // Add auxiliary locations;
   // This handles the old version of tide index in which the aux locations are separately stored in a vector.    
   if (peptide.aux_locations_index() && locations) {  
@@ -69,10 +67,10 @@ PeptideLite::PeptideLite(const pb::Peptide& peptide,
   string scoring_method = Params::GetString("score-function"); // Handle this properly with Get
   if ( scoring_method == "combined-p-values") 
     b_ions_only_ = true; 
-  protein_id_str_ = "";
-  flankingAAs_ = "";
-  seqWithMods_ = "";
-  mod_string_ = "";
+  protein_id_str_ = string("");
+  flankingAAs_ = string("");
+  seq_with_mods_ = string("");
+  mod_string_ = string("");
 }
 
 template<class W>
@@ -191,40 +189,33 @@ vector<double> PeptideLite::getAAMasses() const {
 }
 
 string PeptideLite::SeqWithMods(int mod_precision) {
+  // If the peptide is reported more than once then reuse the strings from previous calculations    
+  if (seq_with_mods_.empty() == false)
+    return seq_with_mods_;
   
-  if (seqWithMods_.empty() == false)
-   return seqWithMods_;
+  seq_with_mods_ = string(residues_, Len());  // Get the plain peptide sequence
   
-  string seq_with_mods = string(residues_, Len());
+  int mod_pos_offset = 0;
+  string mod_str;
+  sort(mods_.begin(), mods_.end());
   
-  if (num_mods_ > 0) {
-    int mod_pos_offset = 0;
-    string mod_str;
-    vector<int> mod;
-    
-    for (int i = 0; i < num_mods_; ++i) {
-      mod.push_back(mods_[i]);
-    }
-    
-    sort(mod.begin(), mod.end());
-    
-    for (int i = 0; i < num_mods_; ++i) {
-      int index;
-      double delta;
-      MassConstants::DecodeMod(mod[i], &index, &delta);
-      mod_str = '[' + StringUtils::ToString(delta, mod_precision) + ']';
-      seq_with_mods.insert(index + 1 + mod_pos_offset, mod_str);
-      mod_pos_offset += mod_str.length();
-    }
+  for (int i = 0; i < num_mods_; ++i) {
+    int index;
+    double delta;
+    MassConstants::DecodeMod(mods_[i], &index, &delta);
+    mod_str = '[' + StringUtils::ToString(delta, mod_precision) + ']';
+    seq_with_mods_.insert(index + 1 + mod_pos_offset, mod_str);
+    mod_pos_offset += mod_str.length();
   }
-  seqWithMods_ = seq_with_mods;
-  return seq_with_mods;  
+  return seq_with_mods_;  
 }
 
 /**
  * Gets the protein name with the peptide position appended. For reporting results
  */
  string  PeptideLite::GetLocationStr(const string& decoy_prefix) {
+  // If the peptide is reported more than once then reuse the strings from previous calculations  
+
   if (protein_id_str_.empty() == false) 
     return protein_id_str_;
 
@@ -251,17 +242,19 @@ string PeptideLite::SeqWithMods(int mod_precision) {
  * Gets the flanking AAs for a Tide peptide sequence for reporting results
  */
 string  PeptideLite::GetFlankingAAs() {
+  // If the peptide is reported more than once then reuse the strings from previous calculations  
+
   if (flankingAAs_.empty() == false) 
     return flankingAAs_;
 
   string flankingAAs;
   flankingAAs.clear();
-  int pos = FirstLocPos();
+  int prot_pos = FirstLocPos();
   const string& seq = proteins_->at(FirstLocProteinId())->residues();
 
-  flankingAAs = ((pos > 0) ? proteins_->at(FirstLocProteinId())->residues().substr(pos-1, 1) : "-") +
-    ((pos+Len() <  proteins_->at(FirstLocProteinId())->residues().length()) ? 
-    proteins_->at(FirstLocProteinId())->residues().substr(pos+Len(),1) : "-");
+  flankingAAs = ((prot_pos > 0) ? proteins_->at(FirstLocProteinId())->residues().substr(prot_pos-1, 1) : "-") +
+    ((prot_pos+Len() <  proteins_->at(FirstLocProteinId())->residues().length()) ? 
+    proteins_->at(FirstLocProteinId())->residues().substr(prot_pos+Len(),1) : "-");
     
   for (vector<pb::Location>::const_iterator
     loc = aux_locations.begin();
@@ -269,20 +262,108 @@ string  PeptideLite::GetFlankingAAs() {
     ++loc
   ) {
     const pb::Protein* protein = proteins_->at((*loc).protein_id());
-    pos = (*loc).pos();
-    flankingAAs += "," + ((pos > 0) ? protein->residues().substr(pos-1, 1) : "-") + 
-      ((pos+Len() <  protein->residues().length()) ? 
-      protein->residues().substr(pos+Len(),1) : "-");
+    prot_pos = (*loc).pos();
+    flankingAAs += "," + ((prot_pos > 0) ? protein->residues().substr(prot_pos-1, 1) : "-") + 
+      ((prot_pos+Len() <  protein->residues().length()) ? 
+      protein->residues().substr(prot_pos+Len(),1) : "-");
   }
   flankingAAs_ = flankingAAs;
   return flankingAAs;
 
 }
-string PeptideLite::getModifications() { 
-  if (mod_string_.empty() == false)
+
+// const pb::ModTable* MassConstants::mod_table_ = NULL; 
+// const pb::ModTable* MassConstants::n_mod_table_ = NULL; 
+// const pb::ModTable* MassConstants::c_mod_table_ = NULL; 
+// const pb::ModTable* MassConstants::nprot_mod_table_ = NULL; 
+// const pb::ModTable* MassConstants::cprot_mod_table_ = NULL;  
+
+string PeptideLite::getModifications(int mod_precision) {
+  // If the peptide is reported more than once then reuse the strings from previous calculations  
+  if (mod_string_.empty() == false)  
     return mod_string_;
 
-  mod_string_ =  string("Modifications");
+  if (seq_with_mods_.empty() == true)
+    sort(mods_.begin(), mods_.end());
+
+  vector<string> mods_list;
+  string sep("_");
+  int prot_pos = FirstLocPos();  
+  double mod_mass;
+  int var_mod_idx = 0;
+  for (int i = 0; i < len_; ++i) {
+    char AA = residues_[i];
+    // Find static modifications 
+
+    if (i == 0) {// peptide N-term
+      if (find_static_mod(MassConstants::n_mod_table_, AA, mod_mass)) {
+        //Get the string
+        string mod = std::to_string(i+1) + sep + string("S") +  sep + StringUtils::ToString(mod_mass, mod_precision) + "_n";   
+        mods_list.push_back(mod);
+      }
+    }
+    if (i == 0 && prot_pos == 0) {// protein N-term
+      if (find_static_mod(MassConstants::nprot_mod_table_, AA, mod_mass)) {
+        //Get the string
+        string mod = std::to_string(i+1) + sep + string("S") +  sep + StringUtils::ToString(mod_mass, mod_precision) + "_N";   
+        mods_list.push_back(mod);
+      }
+    }
+
+    if (i == len_-1) {  // peptide C-term
+      if (find_static_mod(MassConstants::c_mod_table_, AA, mod_mass)) {
+        //Get the string
+        string mod = std::to_string(i+1) + sep + string("S") +  sep + StringUtils::ToString(mod_mass, mod_precision) + "_c";   
+        mods_list.push_back(mod);
+      }
+    }
+    if (i == len_-1 && prot_pos +i + 1 ==  proteins_->at(FirstLocProteinId())->residues().length() ) {  // protein C-term
+      if (find_static_mod(MassConstants::cprot_mod_table_, AA, mod_mass)) {
+        //Get the string
+        string mod = std::to_string(i+1) + sep + string("S") +  sep + StringUtils::ToString(mod_mass, mod_precision) + "_C";   
+        mods_list.push_back(mod);
+      }
+    }
+    if (find_static_mod(MassConstants::mod_table_, AA, mod_mass)) { // Static mod
+      //Get the string
+      string mod = std::to_string(i+1) + sep + string("S") +  sep + StringUtils::ToString(mod_mass, mod_precision);
+      mods_list.push_back(mod);
+    }
+
+    // Add variable mods
+    if (var_mod_idx < mods_.size()) {
+      int index;
+      double delta;
+      MassConstants::DecodeMod(mods_[var_mod_idx], &index, &delta);
+      if (index == i) {
+        string mod = std::to_string(i+1) + sep + string("V") +  sep + StringUtils::ToString(delta, mod_precision);
+        mods_list.push_back(mod);
+        var_mod_idx++;
+      }
+    }
+  }
+  mod_string_ = StringUtils::Join(mods_list, ',');
   return mod_string_;
+}
+
+bool PeptideLite::find_static_mod(const pb::ModTable* mod_table, char AA, double& mod_mass) {
+
+  for (int i = 0; i < mod_table->static_mod_size(); i++) {
+    
+    const pb::Modification& mod = mod_table->static_mod(i);
+
+    if (mod.has_delta() && mod.has_amino_acids()) {
+
+      string AAs = mod.amino_acids();
+      int AA_len = AAs.length();
+      for (int j = 0; j < AA_len; ++j) {
+        if (AAs[j] == AA || AAs[j] == 'X') { // Found a static mod for Amino acid AA;
+          mod_mass =  mod.delta();
+          return true;
+        }
+      }
+    }
+  }
+  return false;  //No modification
 }
 
