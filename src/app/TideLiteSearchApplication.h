@@ -98,6 +98,13 @@ class TideLiteSearchApplication : public CruxApplication {
   int decoy_num_;  // Number of decoys per peptide;
   int top_matches_;
 
+  vector<double> dAAFreqN_;
+  vector<double> dAAFreqI_;
+  vector<double> dAAFreqC_;
+  vector<double> dAAMass_;
+  map<double, std::string> mMass2AA_;
+
+
   /**
    * Constructor
    */
