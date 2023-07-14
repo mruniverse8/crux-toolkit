@@ -37,6 +37,13 @@ const double TideLiteSearchApplication::XCORR_SCALING = 100000000.0;
  * tide/spectrum_preprocess2.cc). */
 const double TideLiteSearchApplication::RESCALE_FACTOR = 20.0;
 
+// Things done:
+// -- handle terminal mod structure in the peptides internally. GH issue: #639
+// -- missing charge states, 0 charege states,, override charge states handled. --> need to update doc. GH issue: #557, #607
+
+
+// Thigns to do:
+
 
 
 TideLiteSearchApplication::TideLiteSearchApplication() {

@@ -812,22 +812,23 @@ int TideIndexApplication::main(
 
           //report the decoy peptide if needed.
           if (out_target_decoy_list) {
-            decoy_peptide_str_with_mods = decoy_peptide_str;
-            if (decoy_current_pb_peptide_.modifications_size() > 0) {
-              mod_pos_offset = 0;
-              vector<double> deltas(decoy_peptide_str.length());
-              for (int m = 0; m < decoy_current_pb_peptide_.modifications_size(); ++m) {
-                mod_code = decoy_current_pb_peptide_.modifications(m);
-                MassConstants::DecodeMod(mod_code, &mod_index, &delta);
-                deltas[mod_index] = delta;
-              }
-              for (int d = 0; d < deltas.size(); ++d) {
-                if (deltas[d] == 0.0) continue;
-                mod_str = '[' + StringUtils::ToString(deltas[d], mod_precision) + ']';
-                decoy_peptide_str_with_mods.insert(d + 1 + mod_pos_offset, mod_str);
-                mod_pos_offset += mod_str.length();
-              }
-            }            
+            decoy_peptide_str_with_mods = getModifiedPeptideSeq(&decoy_current_pb_peptide_,  &vProteinHeaderSequence);
+            // decoy_peptide_str_with_mods = decoy_peptide_str;
+            // if (decoy_current_pb_peptide_.modifications_size() > 0) {
+            //   mod_pos_offset = 0;
+            //   vector<double> deltas(decoy_peptide_str.length());
+            //   for (int m = 0; m < decoy_current_pb_peptide_.modifications_size(); ++m) {
+            //     mod_code = decoy_current_pb_peptide_.modifications(m);
+            //     MassConstants::DecodeMod(mod_code, &mod_index, &delta);
+            //     deltas[mod_index] = delta;
+            //   }
+            //   for (int d = 0; d < deltas.size(); ++d) {
+            //     if (deltas[d] == 0.0) continue;
+            //     mod_str = '[' + StringUtils::ToString(deltas[d], mod_precision) + ']';
+            //     decoy_peptide_str_with_mods.insert(d + 1 + mod_pos_offset, mod_str);
+            //     mod_pos_offset += mod_str.length();
+            //   }
+            // }            
             *out_target_decoy_list << decoy_peptide_str_with_mods.c_str();
           }
         }
@@ -1130,31 +1131,90 @@ string getModifiedPeptideSeq(const pb::Peptide* peptide,
   const ProteinVec* proteins) {
   int mod_index;
   double mod_delta;
-  stringstream mod_stream;
+  // stringstream mod_stream;
+  int mod_pos_offset = 0;
+  int index;
+  double delta;
+  int modPrecision = Params::GetInt("mod-precision");
+
   const pb::Location& location = peptide->first_location();
   const pb::Protein* protein = proteins->at(location.protein_id());
-  // Get peptide sequence without mods
-  string pep_str = protein->residues().substr(location.pos(), peptide->length());
+  string mod_str;
+  string seq_with_mods ;
+  // Get peptide sequence without mods, 
+  if (peptide->has_decoy_sequence()){  // decoy or target
+    seq_with_mods = peptide->decoy_sequence();
+  } else {
+    seq_with_mods = protein->residues().substr(location.pos(), peptide->length());
+  }
 
-  // Store all mod indices/deltas
-  map<int, double> mod_map;
-  set<int> mod_indices;
-  for (int j = 0; j < peptide->modifications_size(); ++j) {
-    MassConstants::DecodeMod(ModCoder::Mod(peptide->modifications(j)),
-      &mod_index, &mod_delta);
-    mod_indices.insert(mod_index);
-    mod_map[mod_index] = mod_delta;
+  if (peptide->has_nterm_mod()){ // Handle N-terminal modifications
+    MassConstants::DecodeMod(ModCoder::Mod(peptide->nterm_mod()), &index, &delta);
+    mod_str = "[" + StringUtils::ToString(delta, modPrecision) + "]-";
+    seq_with_mods.insert(0, mod_str);
+    mod_pos_offset += mod_str.length();
   }
-  int modPrecision = Params::GetInt("mod-precision");
-  for (set<int>::const_reverse_iterator j = mod_indices.rbegin();
-    j != mod_indices.rend();
-    ++j) {
-    // Insert the modification string into the peptide sequence
-    mod_stream << '[' << StringUtils::ToString(mod_map[*j], modPrecision) << ']';
-    pep_str.insert(*j + 1, mod_stream.str());
-    mod_stream.str("");
+
+  int num_mods = peptide->modifications_size();
+  if (num_mods > 0) {
+    vector<int> mod;
+    
+    for (int i = 0; i < num_mods; ++i) {
+      mod.push_back(peptide->modifications(i));
+    }
+    
+    sort(mod.begin(), mod.end());
+    
+    for (int i = 0; i < num_mods; ++i) {
+      int index;
+      double delta;
+      MassConstants::DecodeMod(mod[i], &index, &delta);
+      mod_str = "[" + StringUtils::ToString(delta, modPrecision) + "]";
+      seq_with_mods.insert(index + 1 + mod_pos_offset, mod_str);
+      mod_pos_offset += mod_str.length();
+    }
   }
-  return pep_str;
+  if (peptide->has_cterm_mod()){  // Handle C-terminal modifications
+    MassConstants::DecodeMod(ModCoder::Mod(peptide->cterm_mod()), &index, &delta);
+    mod_str = "-[" + StringUtils::ToString(delta, modPrecision) + "]";
+    seq_with_mods.insert(index + 1 + mod_pos_offset, mod_str);
+    mod_pos_offset += mod_str.length();
+  }
+
+  return seq_with_mods;  
+
+
+
+  // // Add the n-terminal modification:
+  // if (peptide->has_nterm_mod()){
+  //   MassConstants::DecodeMod(ModCoder::Mod(peptide->nterm_mod()),
+  //   &mod_index, &mod_delta);
+  //   mod_stream << '[' << StringUtils::ToString(mod_map[*j], modPrecision) << "]-";  
+  //   pep_str.insert(*j + 1, mod_stream.str());
+  //   mod_stream.str("");
+
+
+  // }
+
+  // // Store all mod indices/deltas
+  // map<int, double> mod_map;
+  // set<int> mod_indices;
+  // for (int j = 0; j < peptide->modifications_size(); ++j) {
+  //   MassConstants::DecodeMod(ModCoder::Mod(peptide->modifications(j)),
+  //     &mod_index, &mod_delta);
+  //   mod_indices.insert(mod_index);
+  //   mod_map[mod_index] = mod_delta;
+  // }
+  // int modPrecision = Params::GetInt("mod-precision");
+  // for (set<int>::const_reverse_iterator j = mod_indices.rbegin();
+  //   j != mod_indices.rend();
+  //   ++j) {
+  //   // Insert the modification string into the peptide sequence
+  //   mod_stream << '[' << StringUtils::ToString(mod_map[*j], modPrecision) << ']';
+  //   pep_str.insert(*j + 1, mod_stream.str());
+  //   mod_stream.str("");
+  // }
+  // return pep_str;
 }
 
 TideIndexApplication::TideIndexPeptide* TideIndexApplication::readNextPeptide(FILE* fp, ProteinVec& vProteinHeaderSequence, int sourceId){

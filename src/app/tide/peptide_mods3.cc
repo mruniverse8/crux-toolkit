@@ -152,32 +152,29 @@ class ModsOutputter {//: public IModsOutputter {
     if (TotalMods(counts) > FLAGS_max_mods) {
       return;
     }
+    
     if (pos == peptide_->length()) {
       OutputCtermMods(pos-1, counts);
     } else {
-      if (pos == peptide_->length()-1){
-        OutputCtermMods(pos, counts);
-      } else {
-        char aa = residues_[pos];
-        int num_poss = mod_table_->NumPoss(aa);
-        for (int i = 0; i < num_poss; ++i) {
-          int poss_max_ct = mod_table_->PossMaxCt(aa, i);
-          if (counts[poss_max_ct] < max_counts_[poss_max_ct]) {
-            ++counts[poss_max_ct];
-            int delta_index = mod_table_->PossDeltIx(aa, i);
-            peptide_->add_modifications(mod_table_->EncodeMod(pos, delta_index));
-            OutputMods(pos+1, counts);
-            peptide_->mutable_modifications()->RemoveLast();
-            --counts[poss_max_ct];
-          }
+      char aa = residues_[pos];
+      int num_poss = mod_table_->NumPoss(aa);
+      for (int i = 0; i < num_poss; ++i) {
+        int poss_max_ct = mod_table_->PossMaxCt(aa, i);
+        if (counts[poss_max_ct] < max_counts_[poss_max_ct]) {
+          ++counts[poss_max_ct];
+          int delta_index = mod_table_->PossDeltIx(aa, i);
+          peptide_->add_modifications(mod_table_->EncodeMod(pos, delta_index));
+          OutputMods(pos+1, counts);
+          peptide_->mutable_modifications()->RemoveLast();
+          --counts[poss_max_ct];
         }
-        // Having this call to OutputMods come last is, in fact, correct, but it's
-        // tricky to see why. When modified peptides have equal mass, we want
-        // modified positions toward the front of the peptide to appear before those
-        // that come toward the end of the peptide. Having this call at the end
-        // achieves that.
-        OutputMods(pos+1, counts); // without further mods
       }
+      // Having this call to OutputMods come last is, in fact, correct, but it's
+      // tricky to see why. When modified peptides have equal mass, we want
+      // modified positions toward the front of the peptide to appear before those
+      // that come toward the end of the peptide. Having this call at the end
+      // achieves that.
+      OutputMods(pos+1, counts); // without further mods
     }
   }
 
@@ -189,9 +186,12 @@ class ModsOutputter {//: public IModsOutputter {
       if (counts[poss_max_ct] < max_counts_[poss_max_ct]) {
         ++counts[poss_max_ct];
         int delta_index = mod_table_->PossDeltIx(aa, i, mod_spec);  
-        peptide_->add_modifications(mod_table_->EncodeMod(pos, delta_index));
-        OutputMods(1, counts);
-        peptide_->mutable_modifications()->RemoveLast();
+        // peptide_->add_modifications(mod_table_->EncodeMod(pos, delta_index));
+        // OutputMods(1, counts);
+        // peptide_->mutable_modifications()->RemoveLast();
+        peptide_->set_nterm_mod(mod_table_->EncodeMod(pos, delta_index));
+        OutputMods(0, counts);
+        peptide_->clear_nterm_mod();
         --counts[poss_max_ct];
       }
     }    
@@ -214,9 +214,12 @@ class ModsOutputter {//: public IModsOutputter {
         int poss_max_ct = mod_table_->PossMaxCt(*aa, i, NTPEP);
         if (max_counts_[poss_max_ct] == 0) {
           int delta_index = mod_table_->PossDeltIx(*aa, i, NTPEP);
-          peptide_->add_modifications(mod_table_->EncodeMod(pos, delta_index));
-          OutputMods(1, counts);
-          peptide_->mutable_modifications()->RemoveLast();
+          // peptide_->add_modifications(mod_table_->EncodeMod(pos, delta_index));
+          // OutputMods(1, counts);
+          // peptide_->mutable_modifications()->RemoveLast();
+          peptide_->set_nterm_mod(mod_table_->EncodeMod(pos, delta_index));
+          OutputMods(0, counts);
+          peptide_->clear_nterm_mod();
           any_term_modification = true;
         }
       }
@@ -242,14 +245,15 @@ class ModsOutputter {//: public IModsOutputter {
         if (counts[poss_max_ct] < max_counts_[poss_max_ct]) {
           ++counts[poss_max_ct];
           int delta_index = mod_table_->PossDeltIx(aa, i, mod_type);
-          peptide_->add_modifications(mod_table_->EncodeMod(pos, delta_index));
-
+          // peptide_->add_modifications(mod_table_->EncodeMod(pos, delta_index));
+          peptide_->set_cterm_mod(mod_table_->EncodeMod(pos, delta_index));
           if (TotalMods(counts) >= FLAGS_min_mods) {
             peptide_->set_id(count_++);
             Write(counts);
           }
 
-          peptide_->mutable_modifications()->RemoveLast();
+          peptide_->clear_cterm_mod();
+//          peptide_->mutable_modifications()->RemoveLast();
           --counts[poss_max_ct];
         }
       }
@@ -275,13 +279,14 @@ class ModsOutputter {//: public IModsOutputter {
         int poss_max_ct = mod_table_->PossMaxCt(*aa, i, CTPEP);
         if (max_counts_[poss_max_ct] == 0) {                          //this condition is never satisfied because max_counts_ is initialized 
           int delta_index = mod_table_->PossDeltIx(*aa, i, CTPEP);    //with the var mods table and var mods max count is always >0  
-          peptide_->add_modifications(mod_table_->EncodeMod(pos, delta_index));
+          // peptide_->add_modifications(mod_table_->EncodeMod(pos, delta_index));
+          peptide_->set_cterm_mod(mod_table_->EncodeMod(pos, delta_index));
 
           if (TotalMods(counts) >= FLAGS_min_mods) {
             peptide_->set_id(count_++);
             Write(counts);
           }
-          peptide_->mutable_modifications()->RemoveLast();
+          peptide_->clear_cterm_mod();
           any_term_modification = true;
         }
       }

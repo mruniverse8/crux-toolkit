@@ -21,6 +21,8 @@ PeptideLite::PeptideLite(const pb::Peptide& peptide,
   mods_(NULL), 
   num_mods_(0), 
   proteins_(&proteins),
+  nterm_mod_(0.0),
+  cterm_mod_(0.0),
   first_loc_protein_id_(peptide.first_location().protein_id()),
   first_loc_pos_(peptide.first_location().pos()), 
   protein_length_(proteins[first_loc_protein_id_]->residues().length()),
@@ -44,9 +46,21 @@ PeptideLite::PeptideLite(const pb::Peptide& peptide,
     }
   }
                     
+  int index;
+  double delta;
   num_mods_ = peptide.modifications_size();
   for (int i = 0; i < num_mods_; ++i)
     mods_.push_back(ModCoder::Mod(peptide.modifications(i)));
+  if (peptide.has_nterm_mod()){  // Handle N-terminal modifications
+    MassConstants::DecodeMod(ModCoder::Mod(peptide.nterm_mod()), &index, &delta);
+    nterm_mod_ = delta;
+  }
+
+  if (peptide.has_cterm_mod()){  // Handle C-terminal modifications
+    MassConstants::DecodeMod(ModCoder::Mod(peptide.cterm_mod()), &index, &delta);
+    cterm_mod_ = delta;
+  }
+
 
   // Add auxiliary locations;
   // This handles the old version of tide index in which the aux locations are separately stored in a vector.    
@@ -185,6 +199,11 @@ vector<double> PeptideLite::getAAMasses() const {
     MassConstants::DecodeMod(mods_[i], &index, &delta);
     masses_charge[index] += delta;
   }
+
+  // Handle terminal mods
+  masses_charge[0] += nterm_mod_;
+  masses_charge[Len()-1] += cterm_mod_;
+
   return masses_charge;
 }
 
@@ -198,15 +217,26 @@ string PeptideLite::SeqWithMods(int mod_precision) {
   int mod_pos_offset = 0;
   string mod_str;
   sort(mods_.begin(), mods_.end());
+  int index;
+  double delta;
   
+  if (nterm_mod_ != 0.0){
+    mod_str = "[" + StringUtils::ToString(nterm_mod_, mod_precision) + "]-";
+    seq_with_mods_.insert(0, mod_str);
+    mod_pos_offset += mod_str.length();
+  }
   for (int i = 0; i < num_mods_; ++i) {
-    int index;
-    double delta;
     MassConstants::DecodeMod(mods_[i], &index, &delta);
     mod_str = '[' + StringUtils::ToString(delta, mod_precision) + ']';
     seq_with_mods_.insert(index + 1 + mod_pos_offset, mod_str);
     mod_pos_offset += mod_str.length();
   }
+
+  if (cterm_mod_ != 0.0){
+    mod_str = "-[" + StringUtils::ToString(cterm_mod_, mod_precision) + "]";
+    seq_with_mods_ += mod_str;
+  }
+
   return seq_with_mods_;  
 }
 
@@ -331,6 +361,10 @@ string PeptideLite::getModifications(int mod_precision) {
     }
 
     // Add variable mods
+    if (nterm_mod_ != 0.0 && i == 0){
+      string mod = std::to_string(0) + sep + string("V") +  sep + StringUtils::ToString(nterm_mod_, mod_precision);
+      mods_list.push_back(mod);
+    }
     if (var_mod_idx < mods_.size()) {
       int index;
       double delta;
@@ -340,6 +374,10 @@ string PeptideLite::getModifications(int mod_precision) {
         mods_list.push_back(mod);
         var_mod_idx++;
       }
+    }
+    if (cterm_mod_ != 0.0 && i == len_-1){
+      string mod = std::to_string(0) + sep + string("V") +  sep + StringUtils::ToString(cterm_mod_, mod_precision);
+      mods_list.push_back(mod);
     }
   }
   mod_string_ = StringUtils::Join(mods_list, ',');
